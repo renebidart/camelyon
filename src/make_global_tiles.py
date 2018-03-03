@@ -1,4 +1,5 @@
 from WSI_utils import*
+import argparse
 
 def main(args):
     import os
@@ -15,56 +16,57 @@ def main(args):
 
     SEED = 101
     average_tiles = 27098
-    mask_level=6
 
     # create validation set. Randomly sample 20% of tumor and non-tumor training set
     np.random.seed(SEED)
-    wsi_locs = glob.glob(os.path.join(data_folder, '/*'))
+    wsi_locs = glob.glob(os.path.join(args.data_loc, '*'))
     num = len(wsi_locs)
-    vaild_idx = np.random.choice(num, np.round(num*valid_frac))
+    vaild_idx = np.random.choice(int(num), int(np.round(num*args.valid_frac)))
 
     # Make the tiles
-    for loc in all_locs[0:1]:
-        # Get the slide class
-        if 'Test' in loc:
-            wsi_type = 'unknown'
-            wsi_id = int(loc.rsplit('_', 1)[-1].rsplit('.', 1)[0])
-            ttv = 'test'
-        elif 'Normal' in loc:
-            wsi_type = 'normal'
-            wsi_id = int(loc.rsplit('_', 1)[-1].rsplit('.', 1)[0])
-        elif 'Tumor' in loc:
-            wsi_type = 'tumor'
-            wsi_id = int(loc.rsplit('_', 1)[-1].rsplit('.', 1)[0])
-        else: 
-            print('Error')
-
+    for loc in wsi_locs:
         # check if in validation set
-        if wsi_id in vaild__idx:
+        wsi_id = int(loc.rsplit('_', 1)[-1].rsplit('.', 1)[0])
+        if wsi_id in vaild_idx:
             ttv = 'valid'
         else:
             ttv = 'train'
 
+        # Get the slide class
+        if 'Test' in loc:
+            wsi_type = 'unknown'
+            ttv = 'test'
+        elif 'Normal' in loc:
+            wsi_type = 'normal'
+        elif 'Tumor' in loc:
+            wsi_type = 'tumor'
+        else: 
+            print('Error')
+
         # now read in and get the samples:
         wsi = WSI(loc)
-        wsi.generate_mask(mask_level=mask_level)
-        total_tiles = wsi.est_total_tiles(tile_size = tile_size)
+        wsi.generate_mask(mask_level=args.mask_level)
+        total_tiles = wsi.est_total_tiles(tile_size = args.tile_size)
         num_tiles = np.amin([total_tiles, average_tiles/2])
+        num_tiles = int(np.round(num_tiles/args.sample_reduction_factor))
+        print('Sampling ', num_tiles, ' from ', loc)
         
         # Make folders for normal, tumor. Save each set of samples from a wsi in a folder within these.
-        out_dir = os.path.join(base_out_dir, ttv, wsi_type, wsi.wsi_name)
-        if not os.path.exists(out_dir):
-            os.makedirs(out_dir)
+        out_wsi_loc = os.path.join(args.out_loc, ttv, wsi_type, wsi.wsi_name)
+        if not os.path.exists(out_wsi_loc):
+            os.makedirs(out_wsi_loc)
+
         # Now make the tiles
-        wsi.make_tiles(out_dir, num_tiles, tile_size)
+        wsi.make_tiles(out_wsi_loc, num_tiles, args.tile_size)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Genetic Algorithm on Learning Rate Schedule')
+    parser = argparse.ArgumentParser(description='Make tiles from WSI')
     parser.add_argument('--data_loc', type=str)
     parser.add_argument('--out_loc', type=str)
-    parser.add_argument('--test_set', type=int, default=False)
+    parser.add_argument('--sample_reduction_factor', type=int, default=1)
     parser.add_argument('--tile_size', type=int, default=224)
     parser.add_argument('--valid_frac', type=int, default=.2)
+    parser.add_argument('--mask_level', type=int, default=6)
     args = parser.parse_args()
 
     main(args)

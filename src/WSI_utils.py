@@ -72,8 +72,9 @@ class WSI(object):
             location = (np.random.randint(sample_patch_ind[0]-tile_size/2, sample_patch_ind[0]+tile_size/2),
                         np.random.randint(sample_patch_ind[1]-tile_size/2, sample_patch_ind[1]+tile_size/2))
             try:
-                img = wsi.read_region(location=location, level=0, size=(tile_size, tile_size))
-            except:
+                img = self.wsi.read_region(location=location, level=0, size=(tile_size, tile_size))
+            except Exception as e: 
+                print(e)
                 continue # if exception try sampling a new location.
             curr_samples+=1
 
