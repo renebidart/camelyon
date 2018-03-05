@@ -29,10 +29,10 @@ def main(args):
         def load_image_pytorch(image_loc, imsize, cuda):
             """load image, returns cuda tensor"""
             image = np.asarray(Image.open(image_loc))
-            image = im = Image.fromarray(image[:,:,:3]) # throw away the transparency channel if it exists
+            image = Image.fromarray(image[:,:,:3]) # throw away the transparency channel if it exists
             loader = transforms.Compose([transforms.Resize(imsize), transforms.ToTensor()])
             image = loader(image).float()
-            image = Variable(image, requires_grad=True)
+            image = Variable(image, requires_grad=False)
             image = image.unsqueeze(0) # add batch dim
             if cuda:
                 image = image.cuda()
@@ -61,7 +61,7 @@ def main(args):
                 print(img_folder)
                 # create all the features for a given folder
                 features = create_img_features(img_folder, imsize=args.imsize, cuda=args.cuda)
-                save_dir = os.path.join(args.out_loc, ttv, slide_class)
+                save_dir = os.path.join(out_loc, ttv, slide_class)
                 if not os.path.exists(save_dir):
                     os.makedirs(save_dir)
                 np.save(os.path.join(save_dir, img_name+'.npy'), features)
