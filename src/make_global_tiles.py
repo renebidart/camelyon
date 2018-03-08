@@ -57,7 +57,7 @@ def main(args):
             os.makedirs(out_wsi_loc)
 
         # Now make the tiles
-        wsi.make_tiles(out_wsi_loc, num_tiles, args.tile_size)
+        wsi.sample_from_wsi(out_wsi_loc, num_tiles, args.tile_size, normalize=True)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Make tiles from WSI')

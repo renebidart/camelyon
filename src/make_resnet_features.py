@@ -61,7 +61,7 @@ def main(args):
                 print(img_folder)
                 # create all the features for a given folder
                 features = create_img_features(img_folder, imsize=args.imsize, cuda=args.cuda)
-                save_dir = os.path.join(out_loc, ttv, slide_class)
+                save_dir = os.path.join(args.out_loc, ttv, slide_class)
                 if not os.path.exists(save_dir):
                     os.makedirs(save_dir)
                 np.save(os.path.join(save_dir, img_name+'.npy'), features)
