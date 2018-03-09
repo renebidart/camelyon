@@ -54,6 +54,7 @@ def main(args):
 
     for idx, loc in enumerate(tumor_wsi_locs):
         print(loc)
+        wsi_id = int(loc.rsplit('_', 1)[-1].rsplit('.', 1)[0])
         if wsi_id in tumor_vaild_idx:
             ttv = 'valid'
         else: 

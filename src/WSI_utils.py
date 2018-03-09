@@ -8,6 +8,16 @@ from skimage import filters
 from skimage.morphology import disk
 from openslide import OpenSlide, OpenSlideUnsupportedFormatError
 
+import torch
+import torch.nn as nn
+from torch.autograd import Variable
+import torchvision.transforms as transforms
+import torch.utils.data
+import torchvision.models as models
+from torchvision import datasets, models, transforms
+import torch.optim as optim
+from torch.optim import lr_scheduler
+
 
 class WSI(object):
     """
@@ -58,7 +68,6 @@ class WSI(object):
         total_pixels = num_patches*self.wsi.level_downsamples[self.mask_level]**2
         total_tiles = np.round(total_pixels/tile_size**2)
         return total_tiles
-
 
 
     def sample_from_wsi(self, out_dir, num_tiles, tile_size=224, normalize=False, tile_sample_level=0):
@@ -231,6 +240,64 @@ class WSI(object):
                 print(annotation_file_name)
                 print(self.annotation_path)
                 return
+
+
+    def make_heatmap_simple(self, model, batch_size=16, tile_sample_level=0, patch_size=299):
+        """Generate heatmap. Use mask level of 8, so that one mask pixel is a little smaller than 299x299
+
+        Args:
+            model: pre-trained pytorch model
+            batch_size: do inference in batches to speed it up
+            tile_sample_level: The level we will be taking the samples from to feed to neural net
+            patch_size: size of the patch (square) that we are taking, in terms of pixels at tile_sample_level
+
+        Not sure how this is done in the paper, but this will make a heatmap with slight overlap between tiles.
+        """
+        self.mask_level=8
+        self.generate_mask(mask_level=self.mask_level)
+        patch_size = int(patch_size)
+        tile_sample_level = int(tile_sample_level)
+        
+        pixel_size = np.round(float(self.wsi.level_downsamples[self.mask_level]/self.wsi.level_downsamples[tile_sample_level]))
+        all_indices = np.asarray(np.where(self.mask))
+
+        num_batches = int(np.ceil(len(all_indices[0])/batch_size))
+
+        heatmap = np.zeros((self.mask.shape[0], self.mask.shape[1], 2))
+        print('heatmap.shape', heatmap.shape)
+        print('num_batches', num_batches)
+
+        for batch in range(num_batches):
+            batch_images = []
+
+            # predict for all images in the batch
+            for idx in range(batch_size*batch, batch_size*(batch+1)):
+                sample_patch_ind = np.array([all_indices[1][idx], all_indices[0][idx]])
+
+                # convert to coordinates of level: tile_sample_level
+                sample_patch_ind = np.round(sample_patch_ind*
+                    self.wsi.level_downsamples[self.mask_level]/float(self.wsi.level_downsamples[tile_sample_level]))
+
+                # want center the patch on the pixel on the heatmap. Coordinates are in terms of top left
+                location = (int(sample_patch_ind[0] - (patch_size - pixel_size)/2),
+                            int(sample_patch_ind[1] - (patch_size - pixel_size)/2))
+
+                img = self.wsi.read_region(location=location, level=tile_sample_level, size=(patch_size, patch_size)).convert('RGB')
+                img = np.asarray(img)
+                img = np.swapaxes(img,0, 2)
+                batch_images.append(img)
+
+            batch_images = torch.from_numpy(np.array(batch_images)).type(torch.FloatTensor)
+            batch_images = Variable(batch_images)
+            batch_output = model(batch_images)
+
+            # add the predictions in the batch to the heatmap
+            for idx, loc in enumerate(all_indices[batch_size*batch:batch_size*(batch+1)]):
+                heatmap[loc[0], loc[1], :] = batch_output[idx]
+
+        return heatmap
+
+
 
 
 ########## Other basic stuff:
