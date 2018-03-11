@@ -1,6 +1,7 @@
 import os
 import sys
 import os.path
+from tqdm import tqdm
 import numpy as np
 from PIL import Image
 from skimage import color
@@ -94,6 +95,9 @@ class WSI(object):
             location = (np.random.randint(sample_patch_ind[0]-tile_size/2, sample_patch_ind[0]+tile_size/2),
                         np.random.randint(sample_patch_ind[1]-tile_size/2, sample_patch_ind[1]+tile_size/2))
 
+            # adjust coordinates toward center by amount of half the number of pixels in the mask level at the downsample ratio
+            # The above location is only correct is the number of pixels in mask pixel is the same as 224
+
             try:
                 img = self.wsi.read_region(location=location, level=0, size=(tile_size, tile_size)).convert('RGB')
             except Exception as e: 
@@ -177,7 +181,6 @@ class WSI(object):
         pil_mask = Image.fromarray(self.mask.astype('uint8'))
         self.mask = pil_mask.resize((annotation_size), Image.ANTIALIAS)
         all_indices = np.asarray(np.where((self.tumor_mask!=255)& self.mask))
-
         
         patch_size = np.round(self.tumor_mask_level/float(self.tumor_annotation_wsi.level_downsamples[tile_sample_level]))
 
@@ -267,7 +270,7 @@ class WSI(object):
         print('heatmap.shape', heatmap.shape)
         print('num_batches', num_batches)
 
-        for batch in range(num_batches):
+        for batch in tqdm(range(num_batches)):
             batch_images = []
 
             # predict for all images in the batch
