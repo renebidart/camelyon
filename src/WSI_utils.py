@@ -210,7 +210,7 @@ class WSI(object):
 
 
     def make_tiles_by_class(self, out_dir, num_tiles, tile_class='normal', tile_size=224, tile_sample_level=0):
-        """ Sample tiles randomly within the a given image, in the given class
+        """ Sample tiles randomly within the a given image, in the given class. Assume running on GPU
         
         Args:
             out_dir: where to save output
@@ -256,8 +256,17 @@ class WSI(object):
 
         Not sure how this is done in the paper, but this will make a heatmap with slight overlap between tiles.
         """
+
         self.mask_level=8
-        self.generate_mask(mask_level=self.mask_level)
+
+        # I don't know why some don't have the high magnification factor
+        try:
+            self.generate_mask(mask_level=self.mask_level)
+        except Exception: 
+            self.mask_level=7
+            print('using mask level: ', self.mask_level)
+            self.generate_mask(mask_level=self.mask_level)
+
         patch_size = int(patch_size)
         tile_sample_level = int(tile_sample_level)
         
@@ -267,6 +276,8 @@ class WSI(object):
         num_batches = int(np.ceil(len(all_indices[0])/batch_size))
 
         heatmap = np.zeros((self.mask.shape[0], self.mask.shape[1], 2))
+
+        print('len(all_indices[0])', len(all_indices[0]))
         print('heatmap.shape', heatmap.shape)
         print('num_batches', num_batches)
 
@@ -275,7 +286,11 @@ class WSI(object):
 
             # predict for all images in the batch
             for idx in range(batch_size*batch, batch_size*(batch+1)):
-                sample_patch_ind = np.array([all_indices[1][idx], all_indices[0][idx]])
+                try:
+                    sample_patch_ind = np.array([all_indices[1][idx], all_indices[0][idx]])
+                except Exception as e: 
+                    print(e)
+                    continue # hopefully exception is just the last batch
 
                 # convert to coordinates of level: tile_sample_level
                 sample_patch_ind = np.round(sample_patch_ind*
@@ -284,14 +299,20 @@ class WSI(object):
                 # want center the patch on the pixel on the heatmap. Coordinates are in terms of top left
                 location = (int(sample_patch_ind[0] - (patch_size - pixel_size)/2),
                             int(sample_patch_ind[1] - (patch_size - pixel_size)/2))
+                try:
+                    img = self.wsi.read_region(location=location, level=tile_sample_level, size=(patch_size, patch_size)).convert('RGB')
+                except Exception as e: 
+                    print(e)
+                    print('Not able to read in location: ', location)
+                    continue
 
-                img = self.wsi.read_region(location=location, level=tile_sample_level, size=(patch_size, patch_size)).convert('RGB')
                 img = np.asarray(img)
                 img = np.swapaxes(img,0, 2)
                 batch_images.append(img)
 
-            batch_images = torch.from_numpy(np.array(batch_images)).type(torch.FloatTensor)
+            batch_images = torch.from_numpy(np.array(batch_images)).type(torch.cuda.FloatTensor)
             batch_images = Variable(batch_images)
+
             batch_output = model(batch_images)
 
             # add the predictions in the batch to the heatmap

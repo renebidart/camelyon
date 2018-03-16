@@ -3,6 +3,7 @@ from WSI_utils import*
 
 def main(args):
     import os
+    import os.path
     import sys
     import glob
     import random
@@ -22,6 +23,9 @@ def main(args):
     import torch.optim as optim
     from torch.optim import lr_scheduler
 
+    os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
+    os.environ["CUDA_VISIBLE_DEVICES"] = args.GPU_NUMBER
+
     # load ttv split
     ttv_split = pickle.load(open( args.ttv_split_loc, "rb" ))
 
@@ -33,13 +37,16 @@ def main(args):
     # load the model
     model.load_state_dict(torch.load(args.model_loc))
     model.eval()
+    model.cuda()
 
     # get all the WSIs:
     all_wsi_locs = glob.glob(args.data_loc+'/**/*.tif', recursive=True)
 
+    avoid_list = ['mask']
+    all_wsi_locs = [loc for loc in all_wsi_locs if not any(x in loc.lower() for x in avoid_list)]
+
     # for each WSI, make the heatmap
     for loc in tqdm(all_wsi_locs):
-        print(loc)
         wsi_id = int(loc.rsplit('_', 1)[-1].rsplit('.', 1)[0])
         ttv = 'train'
         if 'normal' in loc.lower():
@@ -55,15 +62,21 @@ def main(args):
             ttv = 'test'
         else:
             print("--------  Invalid slide class ------")
-        
-        wsi = WSI(loc)
-        heatmap = wsi.make_heatmap_simple(model, batch_size=args.batch_size, tile_sample_level=0, patch_size=299)
 
-        outfile = os.path.join(args.out_loc, ttv, slide_class, +str(wsi_id)+'heatmap.npy')
+        outfile = os.path.join(args.out_loc, ttv, slide_class)
         if not os.path.exists(outfile):
             os.makedirs(outfile)
+        heatmap_loc = outfile+str(wsi_id)+'heatmap.npy'
 
-        np.save(outfile, heatmap)
+        # check if the file was already made:
+        if os.path.isfile(heatmap_loc):
+            print('Already created: ', loc)
+            continue
+        else:
+            print('Creating heatmap: ', loc)
+            wsi = WSI(loc)
+            heatmap = wsi.make_heatmap_simple(model, batch_size=args.batch_size, tile_sample_level=0, patch_size=299)
+            np.save(heatmap_loc, heatmap)
 
 
 if __name__ == "__main__":
@@ -72,7 +85,9 @@ if __name__ == "__main__":
     parser.add_argument('--out_loc', type=str)
     parser.add_argument('--model_loc', type=str)
     parser.add_argument('--ttv_split_loc', type=str)
-    parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--GPU_NUMBER', type=str, default='1')
+
     args = parser.parse_args()
 
     main(args)
