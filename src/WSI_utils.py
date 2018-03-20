@@ -282,23 +282,29 @@ class WSI(object):
         print('num_batches', num_batches)
 
         for batch in tqdm(range(num_batches)):
+            print('batch', batch)
             batch_images = []
 
             # predict for all images in the batch
             for idx in range(batch_size*batch, batch_size*(batch+1)):
                 try:
-                    sample_patch_ind = np.array([all_indices[1][idx], all_indices[0][idx]])
+                    sample_patch_ind = np.array([all_indices[0][idx], all_indices[1][idx]])
                 except Exception as e: 
                     print(e)
                     continue # hopefully exception is just the last batch
+
+                # print('sample_patch_ind: ', sample_patch_ind)
 
                 # convert to coordinates of level: tile_sample_level
                 sample_patch_ind = np.round(sample_patch_ind*
                     self.wsi.level_downsamples[self.mask_level]/float(self.wsi.level_downsamples[tile_sample_level]))
 
-                # want center the patch on the pixel on the heatmap. Coordinates are in terms of top left
-                location = (int(sample_patch_ind[0] - (patch_size - pixel_size)/2),
-                            int(sample_patch_ind[1] - (patch_size - pixel_size)/2))
+                # print('sample_patch_ind: ', sample_patch_ind)
+
+                # want center the patch on the pixel on the heatmap. Coordinates are in terms of top left. Must make backwards for pil
+                location = (int(sample_patch_ind[1] - (patch_size - pixel_size)/2),
+                            int(sample_patch_ind[0] - (patch_size - pixel_size)/2))
+                # print('location: ', location)
                 try:
                     img = self.wsi.read_region(location=location, level=tile_sample_level, size=(patch_size, patch_size)).convert('RGB')
                 except Exception as e: 
@@ -310,6 +316,151 @@ class WSI(object):
                 img = np.swapaxes(img,0, 2)
                 batch_images.append(img)
 
+            print('predicting batch', batch)
+            batch_images = torch.from_numpy(np.array(batch_images)).type(torch.cuda.FloatTensor)
+            batch_images = Variable(batch_images)
+
+            batch_output = model(batch_images)
+
+            # add the predictions in the batch to the heatmap
+            for idx, loc in enumerate(all_indices[batch_size*batch:batch_size*(batch+1)]):
+                print('location: ', loc[0], loc[1])
+                print('batch_output[idx].data: ', batch_output[idx].data)
+                heatmap[loc[0], loc[1], :] = batch_output[idx]
+        return heatmap
+
+    def make_heatmap_really_simple(self, model, tile_sample_level=0, patch_size=299):
+
+        self.mask_level=8
+
+        # I don't know why some don't have the high magnification factor
+        try:
+            self.generate_mask(mask_level=self.mask_level)
+        except Exception: 
+            self.mask_level=7
+            print('using mask level: ', self.mask_level)
+            self.generate_mask(mask_level=self.mask_level)
+
+        patch_size = int(patch_size)
+        tile_sample_level = int(tile_sample_level)
+        
+        pixel_size = np.round(float(self.wsi.level_downsamples[self.mask_level]/self.wsi.level_downsamples[tile_sample_level]))
+        all_indices = np.asarray(np.where(self.mask))
+        heatmap = np.zeros((self.mask.shape[0], self.mask.shape[1], 2))
+
+        print('len(all_indices[0])', len(all_indices[0]))
+        print('heatmap.shape', heatmap.shape)
+
+        # predict for all images in the batch
+        for idx in tqdm(range(len(all_indices[0])[0:])):
+            try:
+                sample_patch_ind = np.array([all_indices[0][idx], all_indices[1][idx]])
+            except Exception as e: 
+                print(e)
+                continue # hopefully exception is just the last batch
+
+
+            # convert to coordinates of level: tile_sample_level
+            sample_patch_ind = np.round(sample_patch_ind*
+                self.wsi.level_downsamples[self.mask_level]/float(self.wsi.level_downsamples[tile_sample_level]))
+
+            # print('sample_patch_ind: ', sample_patch_ind)
+
+            # want center the patch on the pixel on the heatmap. Coordinates are in terms of top left. Must make backwards for pil
+            location = (int(sample_patch_ind[1] - (patch_size - pixel_size)/2),
+                        int(sample_patch_ind[0] - (patch_size - pixel_size)/2))
+            # print('location: ', location)
+            try:
+                img = self.wsi.read_region(location=location, level=tile_sample_level, size=(patch_size, patch_size)).convert('RGB')
+            except Exception as e: 
+                print(e)
+                print('Not able to read in location: ', location)
+                continue
+
+            img = np.asarray(img)
+            img = np.swapaxes(img,0, 2)
+
+            img = torch.from_numpy(np.array(img)).type(torch.cuda.FloatTensor)
+            img = img.unsqueeze(0)
+            img = Variable(img)
+
+            img_output = model(img)
+            
+            heatmap[all_indices[0][idx], all_indices[1][idx], :] = img_output.data
+
+        return heatmap
+
+
+    def make_heatmap(self, model, batch_size=16, tile_sample_level=0, patch_size=299, stride = 128):
+        """Generate heatmap. Specify the mask level, and apply the model with a given stride over the entire imate
+
+        Args:
+            model: pre-trained pytorch model
+            batch_size: do inference in batches to speed it up
+            tile_sample_level: The level we will be taking the samples from to feed to neural net
+            patch_size: size of the patch (square) that we are taking, in terms of pixels at tile_sample_level
+            stride: distance to move each time the network is applied when generating the heatmap. In terms of pixels at tile_sample_level
+
+        """
+
+        self.mask_level=8
+
+        # I don't know why some don't have the high magnification factor
+        try:
+            self.generate_mask(mask_level=self.mask_level)
+        except Exception: 
+            self.mask_level=7
+            print('using mask level: ', self.mask_level)
+            self.generate_mask(mask_level=self.mask_level)
+
+        patch_size = int(patch_size)
+        tile_sample_level = int(tile_sample_level)
+        
+        pixel_size = np.round(float(self.wsi.level_downsamples[self.mask_level]/self.wsi.level_downsamples[tile_sample_level]))
+        all_indices = np.asarray(np.where(self.mask))
+
+        num_batches = int(np.ceil(len(all_indices[0])/batch_size))
+
+        heatmap = np.zeros((self.mask.shape[0], self.mask.shape[1], 2))
+
+        print('len(all_indices[0])', len(all_indices[0]))
+        print('heatmap.shape', heatmap.shape)
+        print('num_batches', num_batches)
+
+        for batch in tqdm(range(num_batches)):
+            batch_images = []
+
+            # predict for all images in the batch
+            for idx in range(batch_size*batch, batch_size*(batch+1)):
+                try:
+                    sample_patch_ind = np.array([all_indices[0][idx], all_indices[1][idx]])
+                except Exception as e: 
+                    print(e)
+                    continue # hopefully exception is just the last batch
+
+                # print('sample_patch_ind: ', sample_patch_ind)
+
+                # convert to coordinates of level: tile_sample_level
+                sample_patch_ind = np.round(sample_patch_ind*
+                    self.wsi.level_downsamples[self.mask_level]/float(self.wsi.level_downsamples[tile_sample_level]))
+
+                # print('sample_patch_ind: ', sample_patch_ind)
+
+                # want center the patch on the pixel on the heatmap. Coordinates are in terms of top left. Must make backwards for pil
+                location = (int(sample_patch_ind[1] - (patch_size - pixel_size)/2),
+                            int(sample_patch_ind[0] - (patch_size - pixel_size)/2))
+                # print('location: ', location)
+                try:
+                    img = self.wsi.read_region(location=location, level=tile_sample_level, size=(patch_size, patch_size)).convert('RGB')
+                except Exception as e: 
+                    print(e)
+                    print('Not able to read in location: ', location)
+                    continue
+
+                img = np.asarray(img)
+                img = np.swapaxes(img,0, 2)
+                batch_images.append(img)
+  
             batch_images = torch.from_numpy(np.array(batch_images)).type(torch.cuda.FloatTensor)
             batch_images = Variable(batch_images)
 
@@ -320,8 +471,6 @@ class WSI(object):
                 heatmap[loc[0], loc[1], :] = batch_output[idx]
 
         return heatmap
-
-
 
 
 ########## Other basic stuff:
