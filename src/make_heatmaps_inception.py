@@ -75,7 +75,7 @@ def main(args):
         else:
             print('Creating heatmap: ', loc)
             wsi = WSI(loc)
-            heatmap = wsi.make_heatmap_simple(model, batch_size=args.batch_size, tile_sample_level=0, patch_size=299)
+            heatmap = wsi.make_heatmap(model, batch_size=args.batch_size, tile_sample_level=0, patch_size=299, stride = 299)
             np.save(heatmap_loc, heatmap)
 
 
@@ -85,7 +85,7 @@ if __name__ == "__main__":
     parser.add_argument('--out_loc', type=str)
     parser.add_argument('--model_loc', type=str)
     parser.add_argument('--ttv_split_loc', type=str)
-    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--batch_size', type=int, default=50)
     parser.add_argument('--GPU_NUMBER', type=str, default='1')
 
     args = parser.parse_args()

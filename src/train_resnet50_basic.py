@@ -24,10 +24,8 @@ def main(args):
     SEED = 101
     np.random.seed(SEED)
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = '1'
     print(torch.cuda.current_device())
     use_gpu = torch.cuda.is_available()
-
 
 
     data_transforms = {
@@ -103,7 +101,7 @@ def main(args):
 
                     # backward + optimize only if in training phase
                     if phase == 'train':
-                        _, preds = torch.max(outputs[0].data, 1)
+                        _, preds = torch.max(outputs.data, 1)
                         loss.backward()
                         optimizer.step()
                     else:
@@ -133,7 +131,7 @@ def main(args):
         model.load_state_dict(best_model_wts)
         return model
 
-    model_ft = models.inception_v3(pretrained=True)
+    model_ft = models.resnet50(pretrained=True)
 
     num_ftrs = model_ft.fc.in_features
     model_ft.fc = nn.Linear(num_ftrs, 2)
@@ -145,8 +143,9 @@ def main(args):
 
     # all parameters are being optimized
     optimizer_ft = optim.SGD(model_ft.parameters(), lr=0.001, momentum=0.9)
+    # optimizer_ft = optim.Adam(model_ft.parameters(), lr=0.0001, momentum=0.9)
 
-    exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=4, gamma=0.1)
+    exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=3, gamma=0.1)
 
     model_ft = train_model(model_ft, criterion, optimizer_ft, exp_lr_scheduler,
                        num_epochs=args.epochs)
@@ -154,12 +153,12 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='train inception_v3')
+    parser = argparse.ArgumentParser(description='train resnet50')
     parser.add_argument('--data_loc', type=str) 
     parser.add_argument('--save_path', type=str)
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=16)
-    parser.add_argument('--num_workers', type=int, default=4)
+    parser.add_argument('--num_workers', type=int, default=2)
     args = parser.parse_args()
 
     main(args)
