@@ -8,6 +8,9 @@ from skimage import color
 from skimage import filters
 from skimage.morphology import disk
 from openslide import OpenSlide, OpenSlideUnsupportedFormatError
+from io import BytesIO
+
+
 
 import torch
 import torch.nn as nn
@@ -242,7 +245,6 @@ class WSI(object):
                 print("This is normal WSI, can't sample tumor from it")
                 print(annotation_file_name)
                 print(self.annotation_path)
-                return
 
 
     def make_heatmap_simple(self, model, batch_size=16, tile_sample_level=0, patch_size=299):
@@ -330,69 +332,6 @@ class WSI(object):
         return heatmap
 
 
-    def make_heatmap_really_simple(self, model, tile_sample_level=0, patch_size=299):
-
-        self.mask_level=8
-
-        # I don't know why some don't have the high magnification factor
-        try:
-            self.generate_mask(mask_level=self.mask_level)
-        except Exception: 
-            self.mask_level=7
-            print('using mask level: ', self.mask_level)
-            self.generate_mask(mask_level=self.mask_level)
-
-        patch_size = int(patch_size)
-        tile_sample_level = int(tile_sample_level)
-        
-        pixel_size = np.round(float(self.wsi.level_downsamples[self.mask_level]/self.wsi.level_downsamples[tile_sample_level]))
-        all_indices = np.asarray(np.where(self.mask))
-        heatmap = np.zeros((self.mask.shape[0], self.mask.shape[1], 2))
-
-        print('len(all_indices[0])', len(all_indices[0]))
-        print('heatmap.shape', heatmap.shape)
-
-        # predict for all images in the batch
-        for idx in tqdm(range(len(all_indices[0])[0:])):
-            try:
-                sample_patch_ind = np.array([all_indices[0][idx], all_indices[1][idx]])
-            except Exception as e: 
-                print(e)
-                continue # hopefully exception is just the last batch
-
-
-            # convert to coordinates of level: tile_sample_level
-            sample_patch_ind = np.round(sample_patch_ind*
-                self.wsi.level_downsamples[self.mask_level]/float(self.wsi.level_downsamples[tile_sample_level]))
-
-            # print('sample_patch_ind: ', sample_patch_ind)
-
-            # want center the patch on the pixel on the heatmap. Coordinates are in terms of top left. Must make backwards for pil
-            location = (int(sample_patch_ind[1] - (patch_size - pixel_size)/2),
-                        int(sample_patch_ind[0] - (patch_size - pixel_size)/2))
-            # print('location: ', location)
-            try:
-                img = self.wsi.read_region(location=location, level=tile_sample_level, size=(patch_size, patch_size)).convert('RGB')
-            except Exception as e: 
-                print(e)
-                print('Not able to read in location: ', location)
-                continue
-
-            img = np.asarray(img)
-            img = np.swapaxes(img,0, 2)
-
-            img = torch.from_numpy(np.array(img)).type(torch.cuda.FloatTensor)
-            img = img.unsqueeze(0)
-            img = Variable(img)
-
-            img_output = model(img)
-            
-            heatmap[all_indices[0][idx], all_indices[1][idx], :] = img_output.data
-
-        return heatmap
-
-
-
     def make_heatmap(self, model, batch_size=16, tile_sample_level=0, patch_size=299, stride = 128):
         """Generate heatmap. Specify the mask level, and apply the model with a given stride over the entire imate
 
@@ -466,6 +405,121 @@ class WSI(object):
                 for i, loc in enumerate(batch_points):
                     heatmap[loc[0], loc[1], :] = batch_output[i]
         return heatmap
+
+    
+    # def convertToJpeg(self, im):
+    #     with BytesIO() as f:
+    #         im.save(f, format='JPEG')
+    #         return f.getvalue()
+
+    def sample_batch_tumor_region(self, num_tiles, tile_size=224, tile_sample_level=0):
+        """Sample from the tumor region in a WSI. """
+        self.tumor_mask_level = 5
+
+        base_dir = self.wsi_path.rsplit('TrainingData', 1)[:-1][0]
+        annotation_file_name = self.wsi_path.rsplit('/', 1)[-1].replace(".tif", "_Mask.tif").replace("tumor", "Tumor")
+        self.annotation_path = os.path.join(base_dir, 'TrainingData', 'Ground_Truth', 'Mask', annotation_file_name)
+        
+        self.tumor_annotation_wsi = OpenSlide(self.annotation_path)
+        self.tumor_mask = self.tumor_annotation_wsi.read_region(location=(0, 0), level=self.tumor_mask_level, 
+            size=self.tumor_annotation_wsi.level_dimensions[self.tumor_mask_level]).convert('RGB')
+        
+        patch_size = np.round(self.tumor_mask_level/float(self.tumor_annotation_wsi.level_downsamples[tile_sample_level]))
+
+        # locations there there is tumor:
+        all_indices = np.asarray(np.where(np.asarray(self.tumor_mask)==255))
+
+        curr_samples = 0
+        batch_images = []
+        while(curr_samples < num_tiles):
+            # randomly select a part in the tumor mask at a higher level (tumor_mask_level)
+            idx = np.random.randint(0, len(all_indices[0]))
+            sample_patch_ind = np.array([all_indices[1][idx], all_indices[0][idx]]) # backwards becaus of numnpy vs. pil ordering
+
+            # convert to coordinates of level: tile_sample_level
+            sample_patch_ind = np.round(sample_patch_ind*self.tumor_annotation_wsi.level_downsamples[self.tumor_mask_level]
+                /float(self.tumor_annotation_wsi.level_downsamples[tile_sample_level]))
+
+            # random point inside this patch for center of new image (sampled image could extend outside tumor region)
+            pixel_size = self.tumor_annotation_wsi.level_downsamples[self.tumor_mask_level]
+            center_offset = (pixel_size-tile_size)/2
+            location = (np.random.randint(sample_patch_ind[0]+center_offset-pixel_size/2, sample_patch_ind[0]+center_offset+pixel_size/2),
+                        np.random.randint(sample_patch_ind[1]+center_offset-pixel_size/2, sample_patch_ind[1]+center_offset+pixel_size/2))
+            try:
+                img = self.wsi.read_region(location=location, level=0, size=(tile_size, tile_size)).convert('RGB')
+            except Exception as e: 
+                print(e)
+                continue # if exception try sampling a new location.
+            curr_samples+=1
+
+            # img = self.convertToJpeg(img)
+            # img = Image.fromarray(img.astype('uint8'), 'RGB')
+            batch_images.append(img)
+        return batch_images
+
+
+    def sample_batch_normal_region(self, num_tiles, tile_size=224, tile_sample_level=0):
+        """Sample from the tumor region in a WSI. depends on if it has tumor or not"""
+        self.mask_level = 5 # use this because it is the lowest resolution that img and annotation are almost same dimension
+        self.tumor_mask_level = self.mask_level
+
+        base_dir = self.wsi_path.rsplit('TrainingData', 1)[:-1][0]
+
+        # create the tissue mask
+        self.generate_mask(mask_level=self.mask_level)
+        patch_size = np.round(self.mask_level/float(self.wsi.level_downsamples[tile_sample_level]))
+
+        
+        if 'tumor' in self.wsi_path.lower():
+            annotation_file_name = self.wsi_path.rsplit('/', 1)[-1].replace(".tif", "_Mask.tif").replace("tumor", "Tumor")
+            self.annotation_path = os.path.join(base_dir, 'TrainingData', 'Ground_Truth', 'Mask', annotation_file_name)
+
+            # generate the tumor mask
+            self.tumor_annotation_wsi = OpenSlide(self.annotation_path)
+            self.tumor_mask = np.asarray(self.tumor_annotation_wsi.read_region(location=(0, 0), level=self.tumor_mask_level, 
+                                         size=self.tumor_annotation_wsi.level_dimensions[self.tumor_mask_level]).convert('RGB'))[:, :, 0]
+
+
+            # Combine the masks, getting where no tumor and inside tissue region. First make sure they are the same size:
+            annotation_size = self.tumor_annotation_wsi.level_dimensions[self.tumor_mask_level]
+            pil_mask = Image.fromarray(self.mask.astype('uint8'))
+            self.mask = pil_mask.resize((annotation_size), Image.ANTIALIAS)
+            all_indices = np.asarray(np.where((self.tumor_mask!=255)& self.mask))
+            patch_size = np.round(self.tumor_mask_level/float(self.tumor_annotation_wsi.level_downsamples[tile_sample_level]))
+
+
+        else: # if there is no tumor, sample within the mask
+            all_indices = np.asarray(np.where(self.mask))
+
+
+        curr_samples = 0
+        batch_images = []
+        while(curr_samples < num_tiles):
+            # randomly select a part in the tumor mask at a higher level (tumor_mask_level)
+            idx = np.random.randint(0, len(all_indices[0]))
+            sample_patch_ind = np.array([all_indices[1][idx], all_indices[0][idx]]) # not sure why this is backwards
+
+            # convert to coordinates of level: tile_sample_level
+            sample_patch_ind = np.round(sample_patch_ind*self.wsi.level_downsamples[self.tumor_mask_level]
+                /float(self.wsi.level_downsamples[tile_sample_level]))
+
+            # random point inside this patch for center of new image (sampled image could extend outside tumor region)
+            pixel_size = self.wsi.level_downsamples[self.tumor_mask_level]
+            center_offset = (pixel_size-tile_size)/2
+            location = (np.random.randint(sample_patch_ind[0]+center_offset-pixel_size/2, sample_patch_ind[0]+center_offset+pixel_size/2),
+                        np.random.randint(sample_patch_ind[1]+center_offset-pixel_size/2, sample_patch_ind[1]+center_offset+pixel_size/2))
+
+            try:
+                img = self.wsi.read_region(location=location, level=0, size=(tile_size, tile_size)).convert('RGB')
+            except Exception as e: 
+                print(e)
+                continue # if exception try sampling a new location.
+            curr_samples+=1
+
+            # img = self.convertToJpeg(img)
+
+            batch_images.append(img)
+        return batch_images
 
 
 
