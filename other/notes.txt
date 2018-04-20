@@ -1,0 +1,7 @@
+If starting again:
+Make sure to check making the strict dataset, as well as the test tile dataset.
+Check what went wrong with the Chowder model. No idea what went wrong
+
+Check the google/normal WSI models:
+Seems the tile classifier was ok. Probably somewhere with heatmap generation. 
+To check if heatmap is semnsible logistic regression on max heatmap value or something like this should give acc > .5

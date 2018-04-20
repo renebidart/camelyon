@@ -57,7 +57,7 @@ def main(args):
             os.makedirs(out_wsi_loc)
 
         # Now make the tiles
-        wsi.sample_from_wsi(out_wsi_loc, num_tiles, args.tile_size, normalize=True)
+        wsi.sample_from_wsi(out_wsi_loc, num_tiles, args.tile_size, normalize=True, strict=args.strict)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Make tiles from WSI')
@@ -67,6 +67,6 @@ if __name__ == "__main__":
     parser.add_argument('--tile_size', type=int, default=224)
     parser.add_argument('--valid_frac', type=int, default=.2)
     parser.add_argument('--mask_level', type=int, default=6)
+    parser.add_argument('--strict', type=bool, default=False)
     args = parser.parse_args()
-
     main(args)

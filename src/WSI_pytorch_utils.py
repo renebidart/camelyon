@@ -16,6 +16,17 @@ from torch.utils.data import Dataset, DataLoader
 from WSI_utils import*
 
 
+import torch
+import torch.nn as nn
+from torch.autograd import Variable
+import torch.utils.data
+import torchvision.models as models
+from torchvision import datasets, models, transforms
+import torch.optim as optim
+from torch.optim import lr_scheduler
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms, utils
+
 class WSIDataset(Dataset):
     """Sample from the slides indicated by the wsi. 
     
@@ -57,7 +68,7 @@ class WSIDataset(Dataset):
         
         num_tiles = int(self.batch_size/2)
         
-        tumor_loc = random.choice(self.tumor_locs)        
+        tumor_loc = random.choice(self.tumor_locs)
         tumor_wsi = WSI(tumor_loc)
         tumor_imgs = tumor_wsi.sample_batch_tumor_region(num_tiles, tile_size=224)
         
@@ -72,11 +83,20 @@ class WSIDataset(Dataset):
         if self.transforms is not None:
             for idx, img in enumerate(batch_imgs):
                 batch_imgs[idx] = self.transforms(batch_imgs[idx])
+
+        ## randomize ???
+        combined = list(zip(batch_imgs, labels))
+        random.shuffle(combined)
+        batch_imgs[:], labels[:] = zip(*combined)
+
+        labels = torch.LongTensor(labels)
+        batch_imgs = torch.squeeze(torch.stack(batch_imgs))
+        # labels = torch.stack(labels, 0)
         
-        return torch.stack(batch_imgs), labels
+        return torch.squeeze(torch.stack(batch_imgs)), labels
 
 
-def train_model(model, dataloaders, criterion, optimizer, scheduler, num_epochs=5, use_gpu=True):
+def train_model(model, dataloaders, dataset_sizes, criterion, optimizer, scheduler, num_epochs=5, use_gpu=True):
     since = time.time()
 
     best_model_wts = copy.deepcopy(model.state_dict())
@@ -102,7 +122,7 @@ def train_model(model, dataloaders, criterion, optimizer, scheduler, num_epochs=
             for data in tqdm(dataloaders[phase]):
                 # get the inputs
                 inputs, labels = data
-                labels = torch.stack(labels, 0)
+                # labels = torch.stack(labels, 0)
 
                 # wrap them in Variable
                 if use_gpu:

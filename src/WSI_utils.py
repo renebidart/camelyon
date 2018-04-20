@@ -73,10 +73,30 @@ class WSI(object):
         total_tiles = np.round(total_pixels/tile_size**2)
         return total_tiles
 
+    def tile_in_mask(self, location, tile_size, mask):
+        print(location)
+        "check if 4 corners in mask. Close enough to correct"
+        return (mask[(location[0], location[1])] and 
+                mask[(location[0]+int(tile_size*0), location[1])] and 
+                mask[(location[0], location[1]+int(tile_size*0))] and 
+                mask[(location[0]+int(tile_size*0), location[1]+int(tile_size*0))])
 
-    def sample_from_wsi(self, out_dir, num_tiles, tile_size=224, normalize=False, tile_sample_level=0):
+    def tile_in_mask_ind(self, location, tile_size, all_indices):
+        print((location[0], location[1]) in all_indices)
+        print((location[0]+int(50), location[1]) in all_indices)
+        print((location[0]+int(tile_size*.5), location[1]+int(tile_size*.5)) in all_indices)
+
+        answer =  ((location[0], location[1]) in all_indices and 
+                    (location[0]+int(tile_size*.5), location[1]) in all_indices and 
+                    (location[0], location[1]+int(tile_size*.5)) in all_indices and 
+                    (location[0]+int(tile_size*.5), location[1]+int(tile_size*.5)) in all_indices)
+        return answer
+
+    def sample_from_wsi(self, out_dir, num_tiles, tile_size=224, normalize=False, tile_sample_level=0, strict=False):
         """Sample from a WSI. Ignore any annotation file if it exits"""
-        self.mask_level=5 
+        self.mask_level=5
+        if strict:
+            self.mask_level=3
         
         # create the mask
         self.generate_mask(mask_level=self.mask_level)
@@ -90,13 +110,25 @@ class WSI(object):
             idx = np.random.randint(0, len(all_indices[0]))
             sample_patch_ind = np.array([all_indices[1][idx], all_indices[0][idx]]) # not sure why this is backwards
 
+            if strict:
+                loc = (all_indices[0][idx], all_indices[1][idx])
+                try:
+                    if not self.tile_in_mask(loc, tile_size, self.mask):
+                        continue
+                except Exception as e: 
+                    continue # if exception try sampling a new location.
+
             # convert to coordinates of level: tile_sample_level
             sample_patch_ind = np.round(sample_patch_ind*
                 self.wsi.level_downsamples[self.mask_level]/float(self.wsi.level_downsamples[tile_sample_level]))
 
             # random point inside this patch for center of new image (sampled image could extend outside patch or mask)
-            location = (np.random.randint(sample_patch_ind[0]-tile_size/2, sample_patch_ind[0]+tile_size/2),
-                        np.random.randint(sample_patch_ind[1]-tile_size/2, sample_patch_ind[1]+tile_size/2))
+            if not strict: 
+                location = (np.random.randint(sample_patch_ind[0]-tile_size/2, sample_patch_ind[0]+tile_size/2),
+                            np.random.randint(sample_patch_ind[1]-tile_size/2, sample_patch_ind[1]+tile_size/2))
+
+            if strict:
+                location = (int(sample_patch_ind[0]), int(sample_patch_ind[1]))
 
             # adjust coordinates toward center by amount of half the number of pixels in the mask level at the downsample ratio
             # The above location is only correct is the number of pixels in mask pixel is the same as 224
@@ -117,40 +149,64 @@ class WSI(object):
             img.save(out_file, 'PNG')
 
 
-    def sample_from_tumor_region(self, out_dir, num_tiles, tile_size=224, tile_sample_level=0):
-        """Sample from the tumor region in a WSI Do this at level 6 """
-        self.tumor_mask_level = 5
+    def sample_from_tumor_region(self, out_dir, num_tiles, tile_size=224, tile_sample_level=0, strict=False):
+        """Sample from the tumor region in a WSI Do this at level """
 
-        base_dir = self.wsi_path.rsplit('TrainingData', 1)[:-1][0]
-        annotation_file_name = self.wsi_path.rsplit('/', 1)[-1].replace(".tif", "_Mask.tif").replace("tumor", "Tumor")
-        self.annotation_path = os.path.join(base_dir, 'TrainingData', 'Ground_Truth', 'Mask', annotation_file_name)
-        
+        self.tumor_mask_level=5
+        if strict:
+            self.tumor_mask_level=3
+
+        # base_dir = self.wsi_path.rsplit('TrainingData', 1)[:-1][0]
+        # annotation_file_name = self.wsi_path.rsplit('/', 1)[-1].replace(".tif", "_Mask.tif").replace("tumor", "Tumor")
+        # self.annotation_path = os.path.join(base_dir, 'TrainingData', 'Ground_Truth', 'Mask', annotation_file_name)
+
         self.tumor_annotation_wsi = OpenSlide(self.annotation_path)
         self.tumor_mask = self.tumor_annotation_wsi.read_region(location=(0, 0), level=self.tumor_mask_level, 
             size=self.tumor_annotation_wsi.level_dimensions[self.tumor_mask_level]).convert('RGB')
+
+        print(np.sum(self.tumor_mask))
+        print(self.annotation_path)
         
-        patch_size = np.round(self.tumor_mask_level/float(self.tumor_annotation_wsi.level_downsamples[tile_sample_level]))
+        # patch size is tile size in terms of sampling level 
+        patch_size = np.round(tile_size/float(self.tumor_annotation_wsi.level_downsamples[tile_sample_level]))
 
         # locations there there is tumor:
         all_indices = np.asarray(np.where(np.asarray(self.tumor_mask)==255))
+        all_indices = [(int(all_indices[0][i]), int(all_indices[1][i])) for i in range(len(all_indices[0]))]
+
+        print('len(all_indices)', len(all_indices))
+        print('patch_size', patch_size)
+        adj_tile_size = int()
 
         curr_samples = 0
         while(curr_samples < num_tiles):
+            print(curr_samples)
             # randomly select a part in the tumor mask at a higher level (tumor_mask_level)
-            idx = np.random.randint(0, len(all_indices[0]))
-            sample_patch_ind = np.array([all_indices[1][idx], all_indices[0][idx]]) # backwards becaus of numnpy vs. pil ordering
+            idx = np.random.randint(0, len(all_indices))
+            print('idx', idx)
+            if strict:
+                loc = all_indices[idx]
+                
+                if not self.tile_in_mask_ind(loc, patch_size, all_indices):
+                    print('not in the mask')
+                    continue
 
             # convert to coordinates of level: tile_sample_level
+            sample_patch_ind = np.array([all_indices[idx][1], all_indices[idx][0]]) # backwards becaus of numnpy vs. pil ordering
             sample_patch_ind = np.round(sample_patch_ind*self.tumor_annotation_wsi.level_downsamples[self.tumor_mask_level]
                 /float(self.tumor_annotation_wsi.level_downsamples[tile_sample_level]))
 
             # random point inside this patch for center of new image (sampled image could extend outside tumor region)
-            location = (np.random.randint(sample_patch_ind[0]-tile_size/2, sample_patch_ind[0]+tile_size/2),
-                        np.random.randint(sample_patch_ind[1]-tile_size/2, sample_patch_ind[1]+tile_size/2))
+            if not strict: 
+                location = (np.random.randint(sample_patch_ind[0]-tile_size/2, sample_patch_ind[0]+tile_size/2),
+                            np.random.randint(sample_patch_ind[1]-tile_size/2, sample_patch_ind[1]+tile_size/2))
+
+            if strict:
+                location = (int(sample_patch_ind[0]), int(sample_patch_ind[1]))
 
             try:
                 img = self.wsi.read_region(location=location, level=0, size=(tile_size, tile_size)).convert('RGB')
-            except Exception as e: 
+            except Exception as e:
                 print(e)
                 continue # if exception try sampling a new location.
             curr_samples+=1
@@ -159,19 +215,19 @@ class WSI(object):
             img.save(out_file, 'PNG')
 
 
-    def sample_from_normal_region(self, out_dir, num_tiles, tile_size=224, tile_sample_level=0):
+    def sample_from_normal_region(self, out_dir, num_tiles, tile_size=224, tile_sample_level=0, strict=False):
         """Sample from the tumor region in a WSI"""
         self.mask_level = 5 # use this because it is the lowest resolution that img and annotation are almost same dimension
+        if strict:
+            self.mask_level=3
         self.tumor_mask_level = self.mask_level
 
-        base_dir = self.wsi_path.rsplit('TrainingData', 1)[:-1][0]
-        annotation_file_name = self.wsi_path.rsplit('/', 1)[-1].replace(".tif", "_Mask.tif").replace("tumor", "Tumor")
-        self.annotation_path = os.path.join(base_dir, 'TrainingData', 'Ground_Truth', 'Mask', annotation_file_name)
+        # base_dir = self.wsi_path.rsplit('TrainingData', 1)[:-1][0]
+        # annotation_file_name = self.wsi_path.rsplit('/', 1)[-1].replace(".tif", "_Mask.tif").replace("tumor", "Tumor")
+        # self.annotation_path = os.path.join(base_dir, 'TrainingData', 'Ground_Truth', 'Mask', annotation_file_name)
 
         # create the tissue mask
         self.generate_mask(mask_level=self.mask_level)
-
-        patch_size = np.round(self.mask_level/float(self.wsi.level_downsamples[tile_sample_level]))
         
         # generate the tumor mask
         self.tumor_annotation_wsi = OpenSlide(self.annotation_path)
@@ -185,21 +241,34 @@ class WSI(object):
         self.mask = pil_mask.resize((annotation_size), Image.ANTIALIAS)
         all_indices = np.asarray(np.where((self.tumor_mask!=255)& self.mask))
         
-        patch_size = np.round(self.tumor_mask_level/float(self.tumor_annotation_wsi.level_downsamples[tile_sample_level]))
-
+        # patch size is tile size in terms of sampling level 
+        patch_size = np.round(tile_size/float(self.tumor_annotation_wsi.level_downsamples[tile_sample_level]))
+        
         curr_samples = 0
         while(curr_samples < num_tiles):
             # randomly select a part in the tumor mask at a higher level (tumor_mask_level)
             idx = np.random.randint(0, len(all_indices[0]))
             sample_patch_ind = np.array([all_indices[1][idx], all_indices[0][idx]]) # not sure why this is backwards
 
+            if strict:
+                loc = (all_indices[0][idx], all_indices[1][idx])
+                only_normal_mask = (self.tumor_mask!=255) & self.mask
+                try:
+                    if not self.tile_in_mask(loc, tile_size, only_normal_mask):
+                        continue
+                except Exception as e: 
+                    continue # if exception try sampling a new location.
+
             # convert to coordinates of level: tile_sample_level
             sample_patch_ind = np.round(sample_patch_ind*self.tumor_annotation_wsi.level_downsamples[self.tumor_mask_level]
                 /float(self.tumor_annotation_wsi.level_downsamples[tile_sample_level]))
 
             # random point inside this patch for center of new image (sampled image could extend outside tumor region)
-            location = (np.random.randint(sample_patch_ind[0]-tile_size/2, sample_patch_ind[0]+tile_size/2),
-                        np.random.randint(sample_patch_ind[1]-tile_size/2, sample_patch_ind[1]+tile_size/2))
+            if not strict:
+                location = (np.random.randint(sample_patch_ind[0]-tile_size/2, sample_patch_ind[0]+tile_size/2),
+                            np.random.randint(sample_patch_ind[1]-tile_size/2, sample_patch_ind[1]+tile_size/2))
+            if strict:
+                location = (int(sample_patch_ind[0]), int(sample_patch_ind[1]))
 
             try:
                 img = self.wsi.read_region(location=location, level=0, size=(tile_size, tile_size)).convert('RGB')
@@ -212,7 +281,7 @@ class WSI(object):
             img.save(out_file, 'PNG')
 
 
-    def make_tiles_by_class(self, out_dir, num_tiles, tile_class='normal', tile_size=224, tile_sample_level=0):
+    def make_tiles_by_class(self, out_dir, num_tiles, tile_class='normal', tile_size=224, tile_sample_level=0, strict=False):
         """ Sample tiles randomly within the a given image, in the given class. Assume running on GPU
         
         Args:
@@ -231,16 +300,50 @@ class WSI(object):
 
         if os.path.isfile(self.annotation_path):
             if(tile_class =='tumor'):
-                self.sample_from_tumor_region(out_dir, num_tiles, tile_sample_level=tile_sample_level, tile_size=tile_size)
+                self.sample_from_tumor_region(out_dir, num_tiles, tile_sample_level=tile_sample_level, tile_size=tile_size, strict=strict)
             elif(tile_class =='normal'):
-                self.sample_from_normal_region(out_dir, num_tiles, tile_sample_level=tile_sample_level, tile_size=tile_size)
+                self.sample_from_normal_region(out_dir, num_tiles, tile_sample_level=tile_sample_level, tile_size=tile_size, strict=strict)
             else:
                 print('Error, invalid tile_class')
                 return
 
         else: # no annotation found, so wsi is normal
             if(tile_class =='normal'):
-                self.sample_from_wsi(out_dir, num_tiles, tile_size, normalize=False, tile_sample_level=tile_sample_level)
+                self.sample_from_wsi(out_dir, num_tiles, tile_size, normalize=False, tile_sample_level=tile_sample_level, strict=strict)
+            else:
+                print("This is normal WSI, can't sample tumor from it")
+                print(annotation_file_name)
+                print(self.annotation_path)
+
+
+    def make_test_tiles_by_class(self, out_dir, num_tiles, tile_class='normal', tile_size=224, tile_sample_level=0, strict=False):
+        """ Sample tiles randomly within the a given image, in the given class. Assume running on GPU
+        
+        Args:
+            out_dir: where to save output
+            num_tiles: number of tiles to create
+            tile_class: 'normal' or 'tumor'
+            tile_size: Must be in terms of pixels at the given level you are sampling
+
+         **** Note PIL uses dim as width, height. Numpy does it as row (height), col (width.). **** 
+        """
+        # check if there is a tumor in the slide:
+        base_dir = self.wsi_path.rsplit('Testset', 1)[:-1][0]
+        annotation_file_name = self.wsi_path.rsplit('/', 1)[-1].replace(".tif", "_Mask.tif")
+        self.annotation_path = os.path.join(base_dir, 'Testset', 'Ground_Truth', 'Masks', annotation_file_name)
+
+        if os.path.isfile(self.annotation_path):
+            if(tile_class =='tumor'):
+                self.sample_from_tumor_region(out_dir,  num_tiles, tile_sample_level=tile_sample_level, tile_size=tile_size, strict=bool(strict))
+            elif(tile_class =='normal'):
+                self.sample_from_normal_region(out_dir, num_tiles, tile_sample_level=tile_sample_level, tile_size=tile_size, strict=bool(strict))
+            else:
+                print('Error, invalid tile_class')
+                return
+
+        else: # no annotation found, so wsi is normal
+            if(tile_class =='normal'):
+                self.sample_from_wsi(out_dir, num_tiles, tile_size, normalize=False, tile_sample_level=tile_sample_level, strict=bool(strict))
             else:
                 print("This is normal WSI, can't sample tumor from it")
                 print(annotation_file_name)
@@ -406,12 +509,7 @@ class WSI(object):
                     heatmap[loc[0], loc[1], :] = batch_output[i]
         return heatmap
 
-    
-    # def convertToJpeg(self, im):
-    #     with BytesIO() as f:
-    #         im.save(f, format='JPEG')
-    #         return f.getvalue()
-
+    ### Online vatch sampling ###
     def sample_batch_tumor_region(self, num_tiles, tile_size=224, tile_sample_level=0):
         """Sample from the tumor region in a WSI. """
         self.tumor_mask_level = 5
@@ -424,7 +522,7 @@ class WSI(object):
         self.tumor_mask = self.tumor_annotation_wsi.read_region(location=(0, 0), level=self.tumor_mask_level, 
             size=self.tumor_annotation_wsi.level_dimensions[self.tumor_mask_level]).convert('RGB')
         
-        patch_size = np.round(self.tumor_mask_level/float(self.tumor_annotation_wsi.level_downsamples[tile_sample_level]))
+        # patch_size = np.round(self.tumor_mask_level/float(self.tumor_annotation_wsi.level_downsamples[tile_sample_level]))
 
         # locations there there is tumor:
         all_indices = np.asarray(np.where(np.asarray(self.tumor_mask)==255))
@@ -467,7 +565,7 @@ class WSI(object):
 
         # create the tissue mask
         self.generate_mask(mask_level=self.mask_level)
-        patch_size = np.round(self.mask_level/float(self.wsi.level_downsamples[tile_sample_level]))
+        # patch_size = np.round(self.mask_level/float(self.wsi.level_downsamples[tile_sample_level]))
 
         
         if 'tumor' in self.wsi_path.lower():
@@ -485,7 +583,7 @@ class WSI(object):
             pil_mask = Image.fromarray(self.mask.astype('uint8'))
             self.mask = pil_mask.resize((annotation_size), Image.ANTIALIAS)
             all_indices = np.asarray(np.where((self.tumor_mask!=255)& self.mask))
-            patch_size = np.round(self.tumor_mask_level/float(self.tumor_annotation_wsi.level_downsamples[tile_sample_level]))
+            # patch_size = np.round(self.tumor_mask_level/float(self.tumor_annotation_wsi.level_downsamples[tile_sample_level]))
 
 
         else: # if there is no tumor, sample within the mask
