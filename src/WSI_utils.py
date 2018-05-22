@@ -163,9 +163,6 @@ class WSI(object):
         self.tumor_annotation_wsi = OpenSlide(self.annotation_path)
         self.tumor_mask = self.tumor_annotation_wsi.read_region(location=(0, 0), level=self.tumor_mask_level, 
             size=self.tumor_annotation_wsi.level_dimensions[self.tumor_mask_level]).convert('RGB')
-
-        print(np.sum(self.tumor_mask))
-        print(self.annotation_path)
         
         # patch size is tile size in terms of sampling level 
         patch_size = np.round(tile_size/float(self.tumor_annotation_wsi.level_downsamples[tile_sample_level]))
@@ -174,16 +171,12 @@ class WSI(object):
         all_indices = np.asarray(np.where(np.asarray(self.tumor_mask)==255))
         all_indices = [(int(all_indices[0][i]), int(all_indices[1][i])) for i in range(len(all_indices[0]))]
 
-        print('len(all_indices)', len(all_indices))
-        print('patch_size', patch_size)
         adj_tile_size = int()
 
         curr_samples = 0
         while(curr_samples < num_tiles):
-            print(curr_samples)
             # randomly select a part in the tumor mask at a higher level (tumor_mask_level)
             idx = np.random.randint(0, len(all_indices))
-            print('idx', idx)
             if strict:
                 loc = all_indices[idx]
                 
