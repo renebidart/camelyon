@@ -114,7 +114,7 @@ py==1.5.3
 pyarrow==0.8.0
 pyasn1==0.4.2
 pycparser==2.18
-Pygments==2.2.0
+Pygments==2.7.4
 pyOpenSSL==17.5.0
 pyparsing==2.2.0
 pyperclip==1.6.0
