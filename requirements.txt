@@ -62,7 +62,7 @@ kaggle==1.0.5
 kaggle-cli==0.12.13
 kiwisolver==1.0.1
 locket==0.2.0
-lxml==4.1.1
+lxml==4.6.3
 MarkupSafe==1.0
 matplotlib==2.2.2
 MechanicalSoup==0.8.0
