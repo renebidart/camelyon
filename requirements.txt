@@ -110,7 +110,7 @@ progressbar2==3.34.3
 prompt-toolkit==1.0.15
 psutil==5.4.3
 ptyprocess==0.5.2
-py==1.5.3
+py==1.10.0
 pyarrow==0.8.0
 pyasn1==0.4.2
 pycparser==2.18
